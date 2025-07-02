@@ -4,3 +4,4 @@ ultralytics
 numpy
 av>=10.0.0
 mediapipe
+opencv-python-headless
