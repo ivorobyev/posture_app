@@ -20,7 +20,6 @@ def analyze_posture(image):
     
     annotated_image = image.copy()
     if results.pose_landmarks:
-        # Рисуем ключевые точки (без текста)
         mp_drawing.draw_landmarks(
             annotated_image, 
             results.pose_landmarks, 
