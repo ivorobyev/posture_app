@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 import time
+import av
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 
 # Кэшируем загрузку модели
 @st.cache_resource
@@ -16,41 +18,36 @@ def get_keypoint_safe(keypoints, idx, fallback=None):
     if keypoints is None or idx >= len(keypoints):
         return fallback if fallback is not None else np.array([0, 0, 0])
     point = keypoints[idx]
-    if len(point) >= 3 and point[2] > 0.25:  # confidence > 0.25
+    if len(point) >= 3 and point[2] > 0.25:
         return point[:3]
     return fallback if fallback is not None else np.array([0, 0, 0])
 
 def analyze_posture(image):
-    """Анализ осанки с защитой от ошибок"""
+    """Анализ осанки для сидячего положения"""
     try:
         results = model(image, verbose=False)
         
         if not results or len(results) == 0:
-            return image, "Встаньте перед камерой"
-        
+            return image, "Повернитесь к камере лицом"
+            
         annotated_image = results[0].plot()
         keypoints = results[0].keypoints.xy[0].cpu().numpy() if results[0].keypoints else None
         
         if keypoints is None or len(keypoints) < 6:  # Минимум: голова и плечи
-            return annotated_image, "Повернитесь к камере лицом"
+            return annotated_image, "Встаньте так, чтобы были видны плечи"
         
-        # COCO-формат ключевых точек
-        NOSE = 0
+        # Получаем ключевые точки верхней части тела
         LEFT_SHOULDER = 5
         RIGHT_SHOULDER = 6
         LEFT_EAR = 3
         RIGHT_EAR = 4
+        NOSE = 0
         
-        # Получаем точки
         ls = get_keypoint_safe(keypoints, LEFT_SHOULDER)
         rs = get_keypoint_safe(keypoints, RIGHT_SHOULDER)
         le = get_keypoint_safe(keypoints, LEFT_EAR, ls)
         re = get_keypoint_safe(keypoints, RIGHT_EAR, rs)
         nose = get_keypoint_safe(keypoints, NOSE, (ls + rs) / 2)
-        
-        # Проверяем минимальный набор точек
-        if ls[2] < 0.2 or rs[2] < 0.2:
-            return annotated_image, "Встаньте прямо (плечи не видны)"
         
         # Анализ осанки
         messages = []
@@ -58,7 +55,7 @@ def analyze_posture(image):
         # 1. Наклон головы вперед
         head_forward = (nose[1] > (ls[1] + rs[1])/2 + 0.1*image.shape[0])
         if head_forward:
-            messages.append("• Голова наклонена вперед")
+            messages.append("• Голова наклонена вперед (текстовая шея)")
         
         # 2. Сутулость плеч
         shoulders_rounded = (ls[0] > rs[0] + 0.1*image.shape[1]) or \
@@ -69,67 +66,50 @@ def analyze_posture(image):
         # Формируем отчет
         if messages:
             report = [
-                "**Обнаружены проблемы с осанкой:**",
+                "**Проблемы с осанкой (сидя):**",
                 *messages,
                 "\n**Рекомендации:**",
-                "• Держите голову прямо",
-                "• Расправьте плечи",
-                "• Следите за положением спины"
+                "• Поднимите экран на уровень глаз",
+                "• Обопритесь на спинку кресла",
+                "• Следите за положением головы"
             ]
         else:
-            report = ["**Отличная осанка!**"]
+            report = ["**Отличная осанка!**", "Вы правильно сидите за столом"]
         
         return annotated_image, "\n".join(report)
         
     except Exception as e:
         return image, f"Ошибка анализа: {str(e)}"
 
+def video_frame_callback(frame):
+    """Обработка кадров для WebRTC"""
+    img = frame.to_ndarray(format="bgr24")
+    analyzed_img, posture_status = analyze_posture(img)
+    return av.VideoFrame.from_ndarray(analyzed_img, format="bgr24")
+
 def main():
     st.set_page_config(layout="wide")
-    st.title("📷 Анализатор осанки")
-    st.write("Это приложение анализирует вашу осанку в реальном времени")
+    st.title("📷 Анализатор осанки для офиса")
     
-    # Создаем две колонки
-    col1, col2 = st.columns([2, 1])
+    st.markdown("""
+    ## Инструкция:
+    1. Сядьте за рабочий стол как обычно
+    2. Разрешите доступ к камере
+    3. Расположитесь так, чтобы были видны плечи и голова
+    """)
     
-    with col1:
-        st.header("Вид с камеры")
-        run = st.checkbox("Включить веб-камеру", value=True)
-        FRAME_WINDOW = st.image([])
+    # WebRTC поток для работы в браузере
+    webrtc_ctx = webrtc_streamer(
+        key="posture",
+        mode=WebRtcMode.SENDRECV,
+        video_frame_callback=video_frame_callback,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+    )
     
-    with col2:
-        st.header("Анализ осанки")
-        status_placeholder = st.empty()
-        if not run:
-            status_placeholder.markdown("""
-                **Ожидание данных с камеры...**
-                
-                Включите веб-камеру для анализа осанки.
-            """)
-    
-    if run:
-        camera = cv2.VideoCapture(0)
-        try:
-            while run:
-                ret, frame = camera.read()
-                if not ret:
-                    st.error("Ошибка чтения камеры")
-                    break
-                
-                # Анализ осанки
-                analyzed_frame, posture_status = analyze_posture(frame)
-                
-                # Отображение в колонках
-                with col1:
-                    FRAME_WINDOW.image(analyzed_frame, channels="BGR")
-                
-                with col2:
-                    status_placeholder.markdown(posture_status)
-                
-                time.sleep(0.1)
-        finally:
-            camera.release()
-            cv2.destroyAllWindows()
+    if not webrtc_ctx.state.playing:
+        st.warning("Ожидание доступа к камере...")
 
 if __name__ == "__main__":
     main()
