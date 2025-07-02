@@ -2,6 +2,5 @@ streamlit
 streamlit-webrtc
 ultralytics
 numpy
-opencv-python
 av>=10.0.0
 mediapipe
