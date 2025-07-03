@@ -6,7 +6,6 @@ import mediapipe as mp
 import av
 from collections import deque
 
-# Инициализация MediaPipe Pose
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 
@@ -15,7 +14,7 @@ class PoseProcessor(VideoProcessorBase):
         self.pose = mp_pose.Pose(min_detection_confidence=0.5,
                                 min_tracking_confidence=0.5,
                                 model_complexity=1)
-        self.status_deque = deque(maxlen=1)  # Для передачи текста в UI
+        self.status_deque = deque(maxlen=1)
 
     def analyze_posture(self, landmarks, image_shape):
         h, w, _ = image_shape
@@ -34,36 +33,36 @@ class PoseProcessor(VideoProcessorBase):
         head_forward = (left_ear.y > left_shoulder.y + 0.1 or right_ear.y > right_shoulder.y + 0.1) and \
                        (nose.y > left_shoulder.y or nose.y > right_shoulder.y)
         if head_forward:
-            messages.append("• Голова наклонена вперед (текстовая шея)")
+            messages.append("• Head tilted forward (text neck) (頭が前に傾いている（テキストネック）)")
 
         shoulders_rounded = left_shoulder.x > left_hip.x + 0.05 or right_shoulder.x < right_hip.x - 0.05
         if shoulders_rounded:
-            messages.append("• Плечи ссутулены (округлены вперед)")
+            messages.append("• Rounded shoulders (肩が丸まっている)")
 
         shoulder_diff = abs(left_shoulder.y - right_shoulder.y)
         hip_diff = abs(left_hip.y - right_hip.y)
         if shoulder_diff > 0.05 or hip_diff > 0.05:
-            messages.append("• Наклон в сторону (несимметричная осанка)")
+            messages.append("• Side tilt (asymmetrical posture) (体が傾いている（非対称な姿勢）)")
 
         if sitting and (left_hip.y < left_shoulder.y + 0.15 or right_hip.y < right_shoulder.y + 0.15):
-            messages.append("• Таз наклонен вперед (сидя)")
+            messages.append("• Pelvis tilted forward (while sitting) (骨盤が前に傾いている（座っている時）)")
 
         if messages:
             report = [
-                f"**{'Сидя' if sitting else 'Стоя'} - обнаружены проблемы:**",
+                f"**{'Sitting' if sitting else 'Standing'} - posture issues detected ({'座っている' if sitting else '立っている'} - 姿勢の問題が検出されました):**",
                 *messages,
-                "\n**Рекомендации:**",
-                "• Держите голову прямо, уши должны быть над плечами",
-                "• Отведите плечи назад и вниз",
-                "• Держите спину прямой, избегайте наклонов в стороны",
-                "• При сидении опирайтесь на седалищные бугры"
+                "\n**Recommendations (アドバイス):**",
+                "• Keep your head straight, ears should be over shoulders (頭をまっすぐに保ち、耳は肩の上に来るように)",
+                "• Pull your shoulders back and down (肩を後ろに引き下げる)",
+                "• Keep your back straight, avoid side tilts (背中をまっすぐに保ち、横に傾かないように)",
+                "• When sitting, rest on your sitting bones (座っている時は坐骨で支える)"
             ]
         else:
             report = [
-                f"**Отличная осанка ({'сидя' if sitting else 'стоя'})!**",
-                "Все ключевые точки находятся в правильном положении.",
-                "\n**Совет:**",
-                "• Продолжайте следить за осанкой в течение дня"
+                f"**Excellent posture ({'sitting' if sitting else 'standing'})! (素晴らしい姿勢（{'座っている' if sitting else '立っている'}）!)**",
+                "All key points are in correct position. (すべてのキーポイントが正しい位置にあります)",
+                "\n**Tip (ヒント):**",
+                "• Continue to monitor your posture throughout the day (一日中姿勢に気を配り続けましょう)"
             ]
 
         return "\n\n".join(report)
@@ -74,7 +73,6 @@ class PoseProcessor(VideoProcessorBase):
 
         results = self.pose.process(img_rgb)
         if results.pose_landmarks:
-            # Рисуем ключевые точки
             mp_drawing.draw_landmarks(
                 img, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
                 mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
@@ -83,16 +81,15 @@ class PoseProcessor(VideoProcessorBase):
             status = self.analyze_posture(results.pose_landmarks, img.shape)
             self.status_deque.append(status)
         else:
-            self.status_deque.append("Ключевые точки не обнаружены")
+            self.status_deque.append("Key points not detected (キーポイントが検出されませんでした)")
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 def main():
     st.set_page_config(layout="wide")
-    st.title("📷 Анализатор осанки с веб-камеры (WebRTC)")
-    st.write("Приложение анализирует вашу осанку в реальном времени с помощью камеры браузера.")
+    st.title("📷 Posture Analyzer with Web Camera (WebRTC) (ウェブカメラを使った姿勢分析)")
+    st.write("This app analyzes your posture in real time using your browser's camera. (このアプリはブラウザのカメラを使ってリアルタイムで姿勢を分析します)")
 
-    # Запускаем WebRTC стример с нашим процессором
     webrtc_ctx = webrtc_streamer(
         key="pose-analyzer",
         video_processor_factory=PoseProcessor,
@@ -100,15 +97,13 @@ def main():
         async_processing=True
     )
 
-    # Выводим текст анализа из процесса
     if webrtc_ctx.video_processor:
-        # Получаем последнюю доступную строку с анализом
         if webrtc_ctx.video_processor.status_deque:
             analysis_text = webrtc_ctx.video_processor.status_deque[-1]
         else:
-            analysis_text = "Ожидание видео и анализа..."
+            analysis_text = "Waiting for video and analysis... (動画と分析を待っています...)"
 
-        st.markdown("### Анализ осанки:")
+        st.markdown("### Posture Analysis (姿勢分析):")
         st.markdown(analysis_text)
 
 if __name__ == "__main__":
